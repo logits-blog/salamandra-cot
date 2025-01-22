@@ -1,0 +1,32 @@
+base:
+  project_name: salamandra-cot
+  log_level: DEBUG
+  models_dir: ../models
+  datasets_dir: ../datasets
+  checkpoints_dir: ./checkpoints
+  generations_dir: ./generations
+  evaluations_dir: ./evaluations
+
+dataset_translate:
+  translated_dir_path: translated
+  model_id: facebook/seamless-m4t-v2-large
+  datasets:
+    - Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
+
+fine_tune:
+  training_dir_path: tuned
+  model_id: BSC-LT/salamandra-7b
+  training_args:
+    num_train_epochs: 10
+    per_device_train_batch_size: 2
+    per_device_eval_batch_size: 1
+    save_steps: 500
+    save_total_limit: 3
+    learning_rate: 3e-4
+    logging_steps: 1000
+    warmup_steps: 500
+    weight_decay: 0.01
+    fp16: true
+    gradient_accumulation_steps: 4
+    report_to: none
+    optim: adamw_torch
