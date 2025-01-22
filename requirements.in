@@ -13,3 +13,4 @@ isort
 dvc
 peft
 trl
+protobuf

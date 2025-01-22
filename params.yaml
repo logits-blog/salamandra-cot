@@ -7,23 +7,27 @@ base:
   generations_dir: ./generations
   evaluations_dir: ./evaluations
 
-dataset_translate:
-  translate_dir_path: translated
-  hf_model_id: facebook/seamless-m4t-v2-large
-  datasets:
+data:
+  train:
     magpie_v2_llama3:
       dir_path: magpie_v2_llama3/data
       format: parquet
       hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
-      lang: en
-      target_lang: es
-      col_names: 
+      src_lang: eng
+      tgt_lang: spa
+      col_names: # map column names to dataset schema
         instruction: instruction
         response: response
 
 format_datasets:
   raw_dir_path: raw
   format_dir_path: formatted
+
+dataset_translate:
+  translate_dir_path: translated
+  model:
+    dir_path: seamless_m4t_v2_large
+    hf_model_id: facebook/seamless-m4t-v2-large
 
 fine_tune:
   training_dir_path: tuned

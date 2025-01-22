@@ -17,10 +17,7 @@ def format_datasets(
     config = load_config(config_path)
     logger = get_logger("DATA_PREPROCESS", config.base.log_level)
 
-    logger.info(f"Loading datasets")
-
-    for dataset, dataset_conf in config.dataset_translate.datasets.items():
-
+    for dataset, dataset_conf in config.data.train.items():
         dataset_path = f"{config.base.datasets_dir}/{config.format_datasets.raw_dir_path}/{dataset_conf.dir_path}"
         logger.info(f"Loading dataset {dataset} from {dataset_path}")
         dataset_df = load_dataset(
