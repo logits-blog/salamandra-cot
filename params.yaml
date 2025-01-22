@@ -14,7 +14,7 @@ data:
       format: parquet
       hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
       src_lang: eng
-      tgt_lang: spa
+      tgt_lang: cat
       col_names: # map column names to dataset schema
         instruction: instruction
         response: response
