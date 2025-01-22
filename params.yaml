@@ -8,14 +8,26 @@ base:
   evaluations_dir: ./evaluations
 
 dataset_translate:
-  translated_dir_path: translated
-  model_id: facebook/seamless-m4t-v2-large
+  translate_dir_path: translated
+  hf_model_id: facebook/seamless-m4t-v2-large
   datasets:
-    - Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
+    magpie_v2_llama3:
+      dir_path: magpie_v2_llama3/data
+      format: parquet
+      hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
+      lang: en
+      target_lang: es
+      col_names: 
+        instruction: instruction
+        response: response
+
+format_datasets:
+  raw_dir_path: raw
+  format_dir_path: formatted
 
 fine_tune:
   training_dir_path: tuned
-  model_id: BSC-LT/salamandra-7b
+  hf_model_id: BSC-LT/salamandra-7b
   training_args:
     num_train_epochs: 10
     per_device_train_batch_size: 2
