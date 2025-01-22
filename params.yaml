@@ -25,6 +25,7 @@ format_datasets:
 
 dataset_translate:
   translate_dir_path: translated
+  checkpoint_step: 5000
   model:
     dir_path: seamless_m4t_v2_large
     hf_model_id: facebook/seamless-m4t-v2-large

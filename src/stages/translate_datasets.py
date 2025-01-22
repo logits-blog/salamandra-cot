@@ -127,22 +127,18 @@ def translate_datasets(
             dataset_conf.format,
         )
 
-        # Translate specified columns
         for col, _ in dataset_conf.col_names.items():
             if col not in dataset_df.columns:
                 raise ValueError(f"Column {col} not found in dataset")
 
             statements = dataset_df[col].values.tolist()
+            translations_tmp = []
 
             for idx in tqdm(
                 range(0, len(statements), min(batch_size, len(statements)))
             ):
                 chunk = statements[idx : idx + batch_size]
-                save_file = os.path.join(
-                    save_dir, f"{col}_translated_{idx}.csv"
-                )
-
-                translations = translate_batch(
+                chunk_translations = translate_batch(
                     chunk,
                     model,
                     processor,
@@ -150,9 +146,24 @@ def translate_datasets(
                     dataset_conf.tgt_lang,
                     device,
                 )
-                translations_df = pd.DataFrame(translations)
-                translations_df.to_csv(save_file, index=False)
-                logger.info(f"Saved generation results to {save_file}")
+                translations_tmp.extend(chunk_translations)
+
+                if (
+                    idx > 0
+                    and idx % config.dataset_translate.checkpoint_step == 0
+                    or idx + batch_size >= len(statements)
+                ):
+                    logger.info(
+                        f"Translations checkpoint at {idx} / {len(statements)}"
+                    )
+                    save_file = os.path.join(
+                        save_dir, f"{col}_translated_{idx}.csv"
+                    )
+                    translations_df = pd.DataFrame(translations_tmp)
+                    translations_df.to_csv(save_file, index=False)
+                    logger.info(f"Saved translations checkpoint to {save_file}")
+                    # Clear cache
+                    translations_tmp = []
 
             logger.info(f"Joining partial files for {dataset}, {col}")
             join_partial_files(save_dir, f"{col}_translated")
