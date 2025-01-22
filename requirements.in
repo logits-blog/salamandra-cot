@@ -1,0 +1,15 @@
+torch
+transformers
+sentencepiece
+pandas
+tqdm
+matplotlib
+datasets
+evaluate
+pyarrow
+python-box
+black
+isort
+dvc
+peft
+trl
