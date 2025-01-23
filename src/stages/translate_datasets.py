@@ -11,14 +11,15 @@ from src.data import load_dataset
 from tqdm import tqdm
 import torch
 import pandas as pd
-from transformers import SeamlessM4Tv2Model, AutoProcessor
-from transformers import AutoProcessor
+from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 def translate_batch(
     statements: list,
-    model: SeamlessM4Tv2Model,
-    processor: AutoProcessor,
+    model: any,
+    tokenizer: any,
     src_lang: str = "eng",
     tgt_lang: str = "spa",
     device: torch.device = torch.device("cuda:0"),
@@ -36,23 +37,22 @@ def translate_batch(
     Returns:
         list: List of translated statements
     """
-    text_inputs = processor(
-        text=statements,
-        src_lang=src_lang,
+    statements_formatted = [f"<2{tgt_lang}> {s}" for s in statements]
+    text_inputs = tokenizer(
+        text=statements_formatted,
         padding=True,
         return_tensors="pt",
-    ).to(device)
+    ).input_ids.to(device)
     with (
         torch.no_grad(),
         torch.autocast(device_type="cuda", dtype=torch.float16),
     ):
         output_tokens = model.generate(
-            **text_inputs,
-            tgt_lang=tgt_lang,
-            generate_speech=False,
+            text_inputs,
+            return_dict_in_generate=True,
         )
     translated_statements = [
-        processor.decode(seq, skip_special_tokens=True)
+        tokenizer.decode(seq, skip_special_tokens=True)
         for seq in output_tokens.sequences
     ]
     # Clear cache
@@ -126,8 +126,8 @@ def translate_datasets(
     )
     logger.info(f"Loading translation model from {model_path}")
 
-    processor = AutoProcessor.from_pretrained(model_path)
-    model = SeamlessM4Tv2Model.from_pretrained(model_path).to(device)
+    model = T5ForConditionalGeneration.from_pretrained(model_path).to(device)
+    tokenizer = T5Tokenizer.from_pretrained(model_path)
     model.eval()  # Set model to evaluation mode
 
     for dataset, dataset_conf in config.data.train.items():
@@ -220,7 +220,7 @@ def translate_datasets(
                 sub_translations = translate_batch(
                     sub_batch,
                     model,
-                    processor,
+                    tokenizer,
                     dataset_conf.src_lang,
                     dataset_conf.tgt_lang,
                     device,
