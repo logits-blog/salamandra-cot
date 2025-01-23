@@ -11,7 +11,11 @@ from src.data import load_dataset
 from tqdm import tqdm
 import torch
 import pandas as pd
-from transformers import T5ForConditionalGeneration, T5Tokenizer
+from transformers import (
+    GenerationConfig,
+    T5ForConditionalGeneration,
+    T5Tokenizer,
+)
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -20,8 +24,7 @@ def translate_batch(
     statements: list,
     model: any,
     tokenizer: any,
-    src_lang: str = "eng",
-    tgt_lang: str = "spa",
+    tgt_lang: str = "es",
     device: torch.device = torch.device("cuda:0"),
 ) -> list:
     """Translate a batch of statements
@@ -30,7 +33,6 @@ def translate_batch(
         statements (list): List of statements to translate
         model (SeamlessM4Tv2Model): Translation model
         processor (AutoProcessor): Processor for the model
-        src_lang (str): Source language code
         tgt_lang (str): Target language code
         device (torch.device): Device to run the model on
 
@@ -50,6 +52,9 @@ def translate_batch(
         output_tokens = model.generate(
             text_inputs,
             return_dict_in_generate=True,
+            generation_config=GenerationConfig(
+                decoder_start_token_id=2,
+            ),
         )
     translated_statements = [
         tokenizer.decode(seq, skip_special_tokens=True)
@@ -221,7 +226,6 @@ def translate_datasets(
                     sub_batch,
                     model,
                     tokenizer,
-                    dataset_conf.src_lang,
                     dataset_conf.tgt_lang,
                     device,
                 )

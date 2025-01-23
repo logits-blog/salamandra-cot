@@ -13,8 +13,8 @@ data:
       dir_path: magpie_v2_llama3/data
       format: parquet
       hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
-      src_lang: eng
-      tgt_lang: spa
+      src_lang: en
+      tgt_lang: es
       col_names: # map column names to dataset schema
         instruction: instruction
         response: response
