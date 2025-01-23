@@ -14,9 +14,6 @@ import pandas as pd
 from transformers import SeamlessM4Tv2Model, AutoProcessor
 from transformers import AutoProcessor
 
-# Set environment variable to allow for dynamic memory allocation
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 
 def translate_batch(
     statements: list,
@@ -176,19 +173,27 @@ def translate_datasets(
                     e_idx = int(match.group(2))
                     existing_ranges.append((s_idx, e_idx))
 
-            # largest_end_idx is the max e_idx among existing partial files
             largest_end_idx = -1
             if existing_ranges:
-                largest_end_idx = max(e for (_, e) in existing_ranges)
-                # If we have partial files covering up to the entire dataset, skip translating
-                if largest_end_idx >= (total_statements - 1):
-                    logger.info(
-                        f"All statements for '{col}' appear translated (largest_end_idx={largest_end_idx}). "
-                        "Skipping translation."
+                existing_ranges.sort(key=lambda x: x[0])
+                if existing_ranges[0][0] != 0:
+                    raise ValueError(
+                        f"Partial files for {col} do not start at index 0. "
+                        "Delete partial files or ensure they start at 0."
                     )
-                    continue
+                # Check for continuity between partials
+                for i in range(1, len(existing_ranges)):
+                    prev_end = existing_ranges[i - 1][1]
+                    curr_start = existing_ranges[i][0]
+                    if curr_start != prev_end + 1:
+                        raise ValueError(
+                            f"Gap detected in partial files for {col} between "
+                            f"{prev_end} and {curr_start}. Delete or fix partial files."
+                        )
+                largest_end_idx = existing_ranges[-1][1]
+            else:
+                largest_end_idx = -1
 
-            # PART 2: Resume from largest_end_idx + 1
             current_idx = largest_end_idx + 1
             if current_idx < 0:
                 current_idx = 0
