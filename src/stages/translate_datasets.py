@@ -150,8 +150,6 @@ def translate_datasets(
             if subsets and col not in subsets:
                 logger.info(f"Skipping {col} (not in subsets)")
                 continue
-            else:
-                logger.info("Processing all columns")
 
             if col not in dataset_df.columns:
                 raise ValueError(f"Column {col} not found in dataset")
