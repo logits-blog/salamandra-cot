@@ -14,6 +14,9 @@ import pandas as pd
 from transformers import SeamlessM4Tv2Model, AutoProcessor
 from transformers import AutoProcessor
 
+# Set environment variable to allow for dynamic memory allocation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 
 def translate_batch(
     statements: list,
