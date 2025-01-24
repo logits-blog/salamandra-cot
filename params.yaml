@@ -27,8 +27,9 @@ dataset_translate:
   translate_dir_path: translated
   checkpoint_step: 500
   model:
-    dir_path: madlad400_3b_mt
-    hf_model_id: google/madlad400-3b-mt
+    max_length: 1024
+    dir_path: m2m100_418M
+    hf_model_id: facebook/m2m100_418M
 
 fine_tune:
   training_dir_path: tuned

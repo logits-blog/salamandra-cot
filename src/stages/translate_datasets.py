@@ -1,4 +1,3 @@
-from shutil import rmtree
 import argparse
 import glob
 import os
@@ -11,11 +10,7 @@ from src.data import load_dataset
 from tqdm import tqdm
 import torch
 import pandas as pd
-from transformers import (
-    GenerationConfig,
-    T5ForConditionalGeneration,
-    T5Tokenizer,
-)
+from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -24,49 +19,74 @@ def translate_batch(
     statements: list,
     model: any,
     tokenizer: any,
+    max_length: int,
+    src_lang: str = "en",
     tgt_lang: str = "es",
     device: torch.device = torch.device("cuda:0"),
 ) -> list:
-    """Translate a batch of statements
+    """Translate a batch of statements, skipping those longer than the specified max_length.
 
     Args:
         statements (list): List of statements to translate
         model (SeamlessM4Tv2Model): Translation model
-        processor (AutoProcessor): Processor for the model
+        tokenizer (AutoProcessor): Tokenizer for the model
+        max_length (int): Maximum allowed sequence length for the model
+        src_lang (str): Source language code
         tgt_lang (str): Target language code
         device (torch.device): Device to run the model on
 
     Returns:
-        list: List of translated statements
+        list: List of dictionaries with original and translated statements
     """
-    statements_formatted = [f"<2{tgt_lang}> {s}" for s in statements]
-    text_inputs = tokenizer(
-        text=statements_formatted,
-        padding=True,
-        return_tensors="pt",
-    ).input_ids.to(device)
-    with (
-        torch.no_grad(),
-        torch.autocast(device_type="cuda", dtype=torch.float16),
-    ):
-        output_tokens = model.generate(
-            text_inputs,
-            return_dict_in_generate=True,
-            generation_config=GenerationConfig(
-                decoder_start_token_id=2,
-            ),
-        )
-    translated_statements = [
-        tokenizer.decode(seq, skip_special_tokens=True)
-        for seq in output_tokens.sequences
+    tokenizer.src_lang = src_lang
+    batch_encoding = tokenizer(
+        text=statements,
+        padding=False,
+        truncation=False,
+        return_tensors=None,
+        add_special_tokens=True,
+    )
+    input_ids_list = batch_encoding["input_ids"]
+
+    valid_indices = [
+        i for i, ids in enumerate(input_ids_list) if len(ids) <= max_length
     ]
-    # Clear cache
-    del text_inputs
-    del output_tokens
-    torch.cuda.empty_cache()
+    valid_statements = [statements[i] for i in valid_indices]
+    translated_valid = []
+    if valid_statements:
+        text_inputs = tokenizer(
+            text=valid_statements,
+            padding=True,
+            truncation=False,
+            return_tensors="pt",
+        ).input_ids.to(device)
+
+        with (
+            torch.no_grad(),
+            torch.autocast(device_type="cuda", dtype=torch.float16),
+        ):
+            output_tokens = model.generate(
+                text_inputs,
+                forced_bos_token_id=tokenizer.get_lang_id(tgt_lang),
+                return_dict_in_generate=True,
+            )
+
+        translated_valid = tokenizer.batch_decode(
+            output_tokens.sequences, skip_special_tokens=True
+        )
+
+        del text_inputs, output_tokens
+        torch.cuda.empty_cache()
+
+    translated_statements = []
+    trans_dict = dict(zip(valid_indices, translated_valid))
+    for idx, stmt in enumerate(statements):
+        translated = trans_dict.get(idx, stmt)  # Use original if skipped
+        translated_statements.append(translated)
+
     return [
-        {"statement": statement, "translated_statement": translation}
-        for statement, translation in zip(statements, translated_statements)
+        {"statement": stmt, "translated_statement": trans}
+        for stmt, trans in zip(statements, translated_statements)
     ]
 
 
@@ -131,8 +151,10 @@ def translate_datasets(
     )
     logger.info(f"Loading translation model from {model_path}")
 
-    model = T5ForConditionalGeneration.from_pretrained(model_path).to(device)
-    tokenizer = T5Tokenizer.from_pretrained(model_path)
+    model = M2M100ForConditionalGeneration.from_pretrained(model_path).to(
+        device
+    )
+    tokenizer = M2M100Tokenizer.from_pretrained(model_path)
     model.eval()  # Set model to evaluation mode
 
     for dataset, dataset_conf in config.data.train.items():
@@ -226,6 +248,8 @@ def translate_datasets(
                     sub_batch,
                     model,
                     tokenizer,
+                    config.dataset_translate.model.max_length,
+                    dataset_conf.src_lang,
                     dataset_conf.tgt_lang,
                     device,
                 )
