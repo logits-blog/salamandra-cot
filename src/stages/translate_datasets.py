@@ -10,7 +10,7 @@ from src.data import load_dataset
 from tqdm import tqdm
 import torch
 import pandas as pd
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -20,6 +20,8 @@ def translate_batch(
     model: any,
     tokenizer: any,
     max_length: int,
+    prompt_template: str,
+    model_args: dict,
     src_lang: str = "en",
     tgt_lang: str = "es",
     device: torch.device = torch.device("cuda:0"),
@@ -28,19 +30,24 @@ def translate_batch(
 
     Args:
         statements (list): List of statements to translate
-        model (SeamlessM4Tv2Model): Translation model
+        model (AutoModel): Translation model
         tokenizer (AutoProcessor): Tokenizer for the model
         max_length (int): Maximum allowed sequence length for the model
+        prompt_template (str): Template for formatting input text. Should avoid including source/target language codes if tokenizer adds them.
         src_lang (str): Source language code
         tgt_lang (str): Target language code
         device (torch.device): Device to run the model on
 
     Returns:
-        list: List of dictionaries with original and translated statements
+        list: List of dictionaries with original and translated statements, in original order with invalid entries skipped.
     """
-    tokenizer.src_lang = src_lang
+    statements_formatted = [
+        prompt_template.format(src_lang=src_lang, tgt_lang=tgt_lang, stmt=stmt)
+        for stmt in statements
+    ]
+
     batch_encoding = tokenizer(
-        text=statements,
+        text=statements_formatted,
         padding=False,
         truncation=False,
         return_tensors=None,
@@ -48,27 +55,32 @@ def translate_batch(
     )
     input_ids_list = batch_encoding["input_ids"]
 
+    # Filter valid indices based on token lengths
     valid_indices = [
         i for i, ids in enumerate(input_ids_list) if len(ids) <= max_length
     ]
-    valid_statements = [statements[i] for i in valid_indices]
+    valid_statements = [statements_formatted[i] for i in valid_indices]
     translated_valid = []
+
     if valid_statements:
         text_inputs = tokenizer(
             text=valid_statements,
             padding=True,
             truncation=False,
             return_tensors="pt",
-        ).input_ids.to(device)
+            add_special_tokens=True,
+        ).to(device)
 
         with (
             torch.no_grad(),
             torch.autocast(device_type="cuda", dtype=torch.float16),
         ):
             output_tokens = model.generate(
-                text_inputs,
-                forced_bos_token_id=tokenizer.get_lang_id(tgt_lang),
+                **text_inputs,
+                max_length=max_length,
                 return_dict_in_generate=True,
+                return_legacy_cache=True,
+                **model_args,
             )
 
         translated_valid = tokenizer.batch_decode(
@@ -79,15 +91,15 @@ def translate_batch(
         torch.cuda.empty_cache()
 
     translated_statements = []
-    trans_dict = dict(zip(valid_indices, translated_valid))
-    for idx, stmt in enumerate(statements):
-        translated = trans_dict.get(idx, stmt)  # Use original if skipped
-        translated_statements.append(translated)
+    for idx, trans in zip(valid_indices, translated_valid):
+        translated_statements.append(
+            {
+                "statement": statements[idx],
+                "translated_statement": trans,
+            }
+        )
 
-    return [
-        {"statement": stmt, "translated_statement": trans}
-        for stmt, trans in zip(statements, translated_statements)
-    ]
+    return translated_statements
 
 
 def join_partial_files(
@@ -151,10 +163,13 @@ def translate_datasets(
     )
     logger.info(f"Loading translation model from {model_path}")
 
-    model = M2M100ForConditionalGeneration.from_pretrained(model_path).to(
-        device
-    )
-    tokenizer = M2M100Tokenizer.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path, padding_side="left"
+    )  # Ensure tokenizer is set to left padding (decoder-only model)
+    model.generation_config.pad_token_id = (
+        tokenizer.pad_token_id
+    )  # Ensure padding token is set
     model.eval()  # Set model to evaluation mode
 
     for dataset, dataset_conf in config.data.train.items():
@@ -249,13 +264,15 @@ def translate_datasets(
                     model,
                     tokenizer,
                     config.dataset_translate.model.max_length,
+                    config.dataset_translate.model.prompt_template,
+                    config.dataset_translate.model.model_args,
                     dataset_conf.src_lang,
                     dataset_conf.tgt_lang,
                     device,
                 )
                 aggregator.extend(sub_translations)
-                statements_since_checkpoint += len(sub_translations)
-                pbar.update(len(sub_translations))
+                statements_since_checkpoint += len(sub_batch)
+                pbar.update(len(sub_batch))
                 current_idx = sub_batch_end  # move to next sub-batch
 
                 # Checkpointing

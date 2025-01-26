@@ -10,11 +10,11 @@ base:
 data:
   train:
     magpie_v2_llama3:
-      dir_path: magpie_v2_llama3/data
+      dir_path: magpie_v2_skywork_o1/data
       format: parquet
-      hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Llama3
-      src_lang: en
-      tgt_lang: es
+      hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Skywork-O1-Llama-3.1-8B
+      src_lang: English
+      tgt_lang: Spanish
       col_names: # map column names to dataset schema
         instruction: instruction
         response: response
@@ -28,8 +28,18 @@ dataset_translate:
   checkpoint_step: 500
   model:
     max_length: 1024
-    dir_path: m2m100_418M
-    hf_model_id: facebook/m2m100_418M
+    dir_path: salamandrata_2b
+    hf_model_id: BSC-LT/salamandraTA-2B
+    prompt_template: "[{src_lang}] {stmt} \n[{tgt_lang}]:"
+    model_args:
+      num_return_sequences: 1
+      do_sample: true
+      num_beams: 5
+      top_p: 0.95
+      repetition_penalty: 1.2
+      no_repeat_ngram_size: 3
+      early_stopping: true
+      use_cache: true
 
 fine_tune:
   training_dir_path: tuned
