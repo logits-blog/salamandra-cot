@@ -48,12 +48,21 @@ def process_text_lines(
     tgt_lang: str,
     device: torch.device,
     batch_size: int,
+    checkpoint_dir: Path,
+    checkpoint_step: int = 100,
     progress_bar: tqdm = None,
-) -> Dict[int, List[str]]:
-    """Process lines in batches with LaTeX-aware splitting."""
-    translated = defaultdict(list)
+) -> None:
+    """
+    Process lines in batches with LaTeX-aware splitting. Saves checkpoints every `checkpoint_step` batches
+    (if > 0) to checkpoint_dir. Each checkpoint contains data from batches since the last checkpoint.
+    """
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    accumulator = []
+    checkpoint_count = 0
 
-    for batch_start in range(0, len(lines), batch_size):
+    for batch_idx, batch_start in enumerate(
+        range(0, len(lines), batch_size), start=1
+    ):
         batch = lines[batch_start : batch_start + batch_size]
         indices, raw_lines = zip(*batch)
 
@@ -64,11 +73,9 @@ def process_text_lines(
             for line in raw_lines
         ]
 
-        inputs = tokenizer(
-            formatted,
-            padding=True,
-            return_tensors="pt",
-        ).to(device)
+        inputs = tokenizer(formatted, padding=True, return_tensors="pt").to(
+            device
+        )
 
         with (
             torch.no_grad(),
@@ -80,6 +87,7 @@ def process_text_lines(
                 return_dict_in_generate=True,
             )
 
+        batch_translations = []
         for i, (idx, output_seq) in enumerate(zip(indices, outputs.sequences)):
             prompt_len = inputs.input_ids[i].size(0)
             translated_text = tokenizer.decode(
@@ -88,12 +96,48 @@ def process_text_lines(
             ).strip()
 
             translated_line = split_at_outside_newline(translated_text)
-            translated[idx].append(translated_line)
+            batch_translations.append(
+                {"original_index": idx, "translated_line": translated_line}
+            )
+
+        accumulator.extend(batch_translations)
 
         if progress_bar:
             progress_bar.update(len(batch))
 
-    return translated
+        if checkpoint_step > 0 and (batch_idx % checkpoint_step == 0):
+            checkpoint_count += 1
+            checkpoint_path = (
+                checkpoint_dir / f"checkpoint_{checkpoint_count:04d}.parquet"
+            )
+            pd.DataFrame(accumulator).to_parquet(checkpoint_path)
+            accumulator = []
+            if progress_bar:
+                progress_bar.write(
+                    f"Saved checkpoint {checkpoint_count} to {checkpoint_path}"
+                )
+
+    if accumulator:
+        checkpoint_count += 1
+        checkpoint_path = (
+            checkpoint_dir / f"checkpoint_{checkpoint_count:04d}.parquet"
+        )
+        pd.DataFrame(accumulator).to_parquet(checkpoint_path)
+        if progress_bar:
+            progress_bar.write(
+                f"Saved final checkpoint {checkpoint_count} to {checkpoint_path}"
+            )
+
+
+def merge_checkpoints(checkpoint_dir: Path) -> Dict[int, List[str]]:
+    """Merge all checkpoint files in directory into a single dict grouped by original_index"""
+    checkpoint_files = sorted(checkpoint_dir.glob("checkpoint_*.parquet"))
+    merged = defaultdict(list)
+    for ckpt_file in checkpoint_files:
+        df = pd.read_parquet(ckpt_file)
+        for _, row in df.iterrows():
+            merged[row["original_index"]].append(row["translated_line"])
+    return merged
 
 
 def translate_dataset(
@@ -107,8 +151,6 @@ def translate_dataset(
     batch_size: int,
     logger: any,
 ) -> None:
-
-    # Collect all lines with their original indices
     instruction_lines, response_lines = [], []
     for idx in range(len(df)):
         instruction = df.iloc[idx].instruction
@@ -121,52 +163,60 @@ def translate_dataset(
             (idx, line.strip()) for line in response.split("\n")
         )
 
-    translated_data = defaultdict(lambda: {"instruction": [], "response": []})
+    instruction_ckpt_dir = save_dir / "checkpoints_instruction"
+    response_ckpt_dir = save_dir / "checkpoints_response"
+    checkpoint_step = config.dataset_translate.checkpoint_step
 
     logger.info(f"Translating {len(instruction_lines)} instruction lines")
     with tqdm(total=len(instruction_lines), desc="Instruction Lines") as pbar:
-        instr_results = process_text_lines(
-            instruction_lines,
-            model,
-            tokenizer,
-            config.dataset_translate.model.prompt_template,
-            config.dataset_translate.model.model_args,
-            dataset_conf.src_lang,
-            dataset_conf.tgt_lang,
-            device,
-            batch_size,
-            pbar,
+        process_text_lines(
+            lines=instruction_lines,
+            model=model,
+            tokenizer=tokenizer,
+            prompt_template=config.dataset_translate.model.prompt_template,
+            model_args=config.dataset_translate.model.model_args,
+            src_lang=dataset_conf.src_lang,
+            tgt_lang=dataset_conf.tgt_lang,
+            device=device,
+            batch_size=batch_size,
+            checkpoint_dir=instruction_ckpt_dir,
+            checkpoint_step=checkpoint_step,
+            progress_bar=pbar,
         )
-        for idx, lines in instr_results.items():
-            translated_data[idx]["instruction"] = lines
 
     logger.info(f"Translating {len(response_lines)} response lines")
     with tqdm(total=len(response_lines), desc="Response Lines") as pbar:
-        resp_results = process_text_lines(
-            response_lines,
-            model,
-            tokenizer,
-            config.dataset_translate.model.prompt_template,
-            config.dataset_translate.model.model_args,
-            dataset_conf.src_lang,
-            dataset_conf.tgt_lang,
-            device,
-            batch_size,
-            pbar,
+        process_text_lines(
+            lines=response_lines,
+            model=model,
+            tokenizer=tokenizer,
+            prompt_template=config.dataset_translate.model.prompt_template,
+            model_args=config.dataset_translate.model.model_args,
+            src_lang=dataset_conf.src_lang,
+            tgt_lang=dataset_conf.tgt_lang,
+            device=device,
+            batch_size=batch_size,
+            checkpoint_dir=response_ckpt_dir,
+            checkpoint_step=checkpoint_step,
+            progress_bar=pbar,
         )
-        for idx, lines in resp_results.items():
-            translated_data[idx]["response"] = lines
 
+    # Merge checkpoints and build final dataset
+    logger.info("Merging instruction checkpoints")
+    instr_results = merge_checkpoints(instruction_ckpt_dir)
+    logger.info("Merging response checkpoints")
+    resp_results = merge_checkpoints(response_ckpt_dir)
+
+    # Build final translated dataset
     final_data = []
     for idx in range(len(df)):
-        data = translated_data.get(idx, {"instruction": [], "response": []})
         final_data.append(
             {
                 "original_index": idx,
                 "original_instruction": df.iloc[idx].instruction,
                 "original_response": df.iloc[idx].response,
-                "translated_instruction": "\n".join(data["instruction"]),
-                "translated_response": "\n".join(data["response"]),
+                "translated_instruction": "\n".join(instr_results.get(idx, [])),
+                "translated_response": "\n".join(resp_results.get(idx, [])),
             }
         )
 
@@ -209,10 +259,9 @@ def translate_datasets(config_path: str, batch_size: int) -> None:
                 f"Preprocessed dataset missing at {preprocessed_path}"
             )
 
-        df = load_dataset(
-            preprocessed_path,
-            dataset_conf.format,
-        ).reset_index(drop=True)
+        df = load_dataset(preprocessed_path, dataset_conf.format).reset_index(
+            drop=True
+        )
 
         translate_dataset(
             df=df,
