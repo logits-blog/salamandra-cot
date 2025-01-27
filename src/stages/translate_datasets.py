@@ -68,7 +68,6 @@ def process_text_lines(
             formatted,
             padding=True,
             return_tensors="pt",
-            add_special_tokens=True,
         ).to(device)
 
         with (
