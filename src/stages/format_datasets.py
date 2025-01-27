@@ -1,9 +1,9 @@
 import argparse
 import os
 
+from src.data import load_dataset
 from src.utils.config import load_config
 from src.utils.logging import get_logger
-from src.data import load_dataset
 
 
 def format_datasets(

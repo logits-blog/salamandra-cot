@@ -11,10 +11,13 @@ data:
   train:
     magpie_v2_llama3:
       dir_path: magpie_v2_skywork_o1/data
+      name: magpie_v2_llama3
       format: parquet
       hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Skywork-O1-Llama-3.1-8B
       src_lang: English
       tgt_lang: Spanish
+      max_length: 1024
+      max_samples: 10000
       col_names: # map column names to dataset schema
         instruction: instruction
         response: response
@@ -23,23 +26,24 @@ format_datasets:
   raw_dir_path: raw
   format_dir_path: formatted
 
+preprocess_datasets:
+  preprocess_dir_path: preprocessed
+
 dataset_translate:
   translate_dir_path: translated
-  checkpoint_step: 500
+  checkpoint_step: 10
   model:
-    max_length: 1024
     dir_path: salamandrata_2b
     hf_model_id: BSC-LT/salamandraTA-2B
-    prompt_template: "[{src_lang}] {stmt} \n[{tgt_lang}]:"
+    prompt_template: "[{src_lang}] {stmt} \n[{tgt_lang}]"
     model_args:
-      num_return_sequences: 1
-      do_sample: true
-      num_beams: 5
-      top_p: 0.95
-      repetition_penalty: 1.2
+      use_cache: true
+      do_sample: false
+      num_beams: 4
+      max_new_tokens: 128
+      repetition_penalty: 1.1
       no_repeat_ngram_size: 3
       early_stopping: true
-      use_cache: true
 
 fine_tune:
   training_dir_path: tuned

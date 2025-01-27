@@ -1,72 +1,72 @@
 import argparse
-import glob
-import os
-import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Tuple
 
+import pandas as pd
+import torch
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from src.data import load_dataset
 from src.utils.config import load_config
 from src.utils.logging import get_logger
-from src.data import load_dataset
-
-from tqdm import tqdm
-import torch
-import pandas as pd
-from transformers import AutoTokenizer, AutoModelForCausalLM
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
-def translate_batch(
-    statements: list,
-    model: any,
-    tokenizer: any,
-    max_length: int,
+def split_at_outside_newline(text: str) -> str:
+    """
+    Find the first newline character that is not inside a LaTeX block (\[...\] or \(...\))
+    and split the text there. Returns the text up to (but not including) that newline.
+    """
+    in_latex = False
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "\\" and i + 1 < n:
+            next_char = text[i + 1]
+            if next_char in ["[", "("]:
+                in_latex = True
+                i += 2  # Skip over opening delimiter
+                continue
+            elif next_char in ["]", ")"]:
+                in_latex = False
+                i += 2  # Skip over closing delimiter
+                continue
+        elif text[i] == "\n" and not in_latex:
+            return text[:i]  # Split here
+        i += 1
+    return text
+
+
+def process_text_lines(
+    lines: List[Tuple[int, str]],
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
     prompt_template: str,
     model_args: dict,
-    src_lang: str = "en",
-    tgt_lang: str = "es",
-    device: torch.device = torch.device("cuda:0"),
-) -> list:
-    """Translate a batch of statements, skipping those longer than the specified max_length.
+    src_lang: str,
+    tgt_lang: str,
+    device: torch.device,
+    batch_size: int,
+    progress_bar: tqdm = None,
+) -> Dict[int, List[str]]:
+    """Process lines in batches with LaTeX-aware splitting."""
+    translated = defaultdict(list)
 
-    Args:
-        statements (list): List of statements to translate
-        model (AutoModel): Translation model
-        tokenizer (AutoProcessor): Tokenizer for the model
-        max_length (int): Maximum allowed sequence length for the model
-        prompt_template (str): Template for formatting input text. Should avoid including source/target language codes if tokenizer adds them.
-        src_lang (str): Source language code
-        tgt_lang (str): Target language code
-        device (torch.device): Device to run the model on
+    for batch_start in range(0, len(lines), batch_size):
+        batch = lines[batch_start : batch_start + batch_size]
+        indices, raw_lines = zip(*batch)
 
-    Returns:
-        list: List of dictionaries with original and translated statements, in original order with invalid entries skipped.
-    """
-    statements_formatted = [
-        prompt_template.format(src_lang=src_lang, tgt_lang=tgt_lang, stmt=stmt)
-        for stmt in statements
-    ]
+        formatted = [
+            prompt_template.format(
+                src_lang=src_lang, tgt_lang=tgt_lang, stmt=line
+            )
+            for line in raw_lines
+        ]
 
-    batch_encoding = tokenizer(
-        text=statements_formatted,
-        padding=False,
-        truncation=False,
-        return_tensors=None,
-        add_special_tokens=True,
-    )
-    input_ids_list = batch_encoding["input_ids"]
-
-    # Filter valid indices based on token lengths
-    valid_indices = [
-        i for i, ids in enumerate(input_ids_list) if len(ids) <= max_length
-    ]
-    valid_statements = [statements_formatted[i] for i in valid_indices]
-    translated_valid = []
-
-    if valid_statements:
-        text_inputs = tokenizer(
-            text=valid_statements,
+        inputs = tokenizer(
+            formatted,
             padding=True,
-            truncation=False,
             return_tensors="pt",
             add_special_tokens=True,
         ).to(device)
@@ -75,285 +75,167 @@ def translate_batch(
             torch.no_grad(),
             torch.autocast(device_type="cuda", dtype=torch.float16),
         ):
-            output_tokens = model.generate(
-                **text_inputs,
-                max_length=max_length,
-                return_dict_in_generate=True,
-                return_legacy_cache=True,
+            outputs = model.generate(
+                **inputs,
                 **model_args,
+                return_dict_in_generate=True,
             )
 
-        translated_valid = tokenizer.batch_decode(
-            output_tokens.sequences, skip_special_tokens=True
+        for i, (idx, output_seq) in enumerate(zip(indices, outputs.sequences)):
+            prompt_len = inputs.input_ids[i].size(0)
+            translated_text = tokenizer.decode(
+                output_seq[prompt_len:],
+                skip_special_tokens=True,
+            ).strip()
+
+            translated_line = split_at_outside_newline(translated_text)
+            translated[idx].append(translated_line)
+
+        if progress_bar:
+            progress_bar.update(len(batch))
+
+    return translated
+
+
+def translate_dataset(
+    df: pd.DataFrame,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    config: dict,
+    dataset_conf: dict,
+    device: torch.device,
+    save_dir: Path,
+    batch_size: int,
+    logger: any,
+) -> None:
+
+    # Collect all lines with their original indices
+    instruction_lines, response_lines = [], []
+    for idx in range(len(df)):
+        instruction = df.iloc[idx].instruction
+        response = df.iloc[idx].response
+
+        instruction_lines.extend(
+            (idx, line.strip()) for line in instruction.split("\n")
+        )
+        response_lines.extend(
+            (idx, line.strip()) for line in response.split("\n")
         )
 
-        del text_inputs, output_tokens
-        torch.cuda.empty_cache()
+    translated_data = defaultdict(lambda: {"instruction": [], "response": []})
 
-    translated_statements = []
-    for idx, trans in zip(valid_indices, translated_valid):
-        translated_statements.append(
+    logger.info(f"Translating {len(instruction_lines)} instruction lines")
+    with tqdm(total=len(instruction_lines), desc="Instruction Lines") as pbar:
+        instr_results = process_text_lines(
+            instruction_lines,
+            model,
+            tokenizer,
+            config.dataset_translate.model.prompt_template,
+            config.dataset_translate.model.model_args,
+            dataset_conf.src_lang,
+            dataset_conf.tgt_lang,
+            device,
+            batch_size,
+            pbar,
+        )
+        for idx, lines in instr_results.items():
+            translated_data[idx]["instruction"] = lines
+
+    logger.info(f"Translating {len(response_lines)} response lines")
+    with tqdm(total=len(response_lines), desc="Response Lines") as pbar:
+        resp_results = process_text_lines(
+            response_lines,
+            model,
+            tokenizer,
+            config.dataset_translate.model.prompt_template,
+            config.dataset_translate.model.model_args,
+            dataset_conf.src_lang,
+            dataset_conf.tgt_lang,
+            device,
+            batch_size,
+            pbar,
+        )
+        for idx, lines in resp_results.items():
+            translated_data[idx]["response"] = lines
+
+    final_data = []
+    for idx in range(len(df)):
+        data = translated_data.get(idx, {"instruction": [], "response": []})
+        final_data.append(
             {
-                "statement": statements[idx],
-                "translated_statement": trans,
+                "original_index": idx,
+                "original_instruction": df.iloc[idx].instruction,
+                "original_response": df.iloc[idx].response,
+                "translated_instruction": "\n".join(data["instruction"]),
+                "translated_response": "\n".join(data["response"]),
             }
         )
 
-    return translated_statements
+    final_path = save_dir / f"{dataset_conf.name}_translated.parquet"
+    pd.DataFrame(final_data).to_parquet(final_path)
+    logger.info(f"Saved translated dataset to {final_path}")
 
 
-def join_partial_files(
-    save_dir: str,
-    naming: str,
-) -> None:
-    """Join partial files into a single file
-
-    Args:
-        save_dir (str): Directory where partial files are saved
-        subset (str): Subset of the dataset
-        naming (str): Naming convention for partial files
-    """
-    partial_files = [
-        f
-        for f in os.listdir(save_dir)
-        if f.endswith(".csv") and f.startswith(f"{naming}_")
-    ]
-    partial_files.sort(key=lambda f: int(f.split("_")[-1].replace(".csv", "")))
-
-    joined_file = os.path.join(save_dir, f"{naming}.csv")
-
-    # Load each partial CSV and concatenate
-    df_list = []
-    for f in partial_files:
-        df_list.append(pd.read_csv(os.path.join(save_dir, f)))
-    df_joined = pd.concat(df_list, ignore_index=True)
-    df_joined.to_csv(joined_file, index=False)
-
-    for f in partial_files:
-        os.remove(os.path.join(save_dir, f))
-
-
-def translate_datasets(
-    config_path: str,
-    batch_size: int,
-    subsets: list = None,
-    device: str = "cuda:0",
-) -> None:
-    """
-    Translate dataset by:
-      - Processing statements in GPU sub-batches of size `batch_size`.
-      - Checkpointing every `checkpoint_size` statements.
-      - Resuming from existing partial files if present.
-      - Combining all partial files at the end.
-
-    Args:
-        config_path (str): Path to config file.
-        batch_size (int): Number of statements per GPU sub-batch.
-        subsets (list): Optional columns to process. If None, process all.
-        device (str): e.g. 'cuda:0'.
-    """
+def translate_datasets(config_path: str, batch_size: int) -> None:
+    """Main entry point with configuration handling."""
     config = load_config(config_path)
     logger = get_logger("TRANSLATE_DATASETS", config.base.log_level)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    checkpoint_size = config.dataset_translate.checkpoint_step
-
-    model_path = os.path.join(
-        config.base.models_dir,
-        config.dataset_translate.model.dir_path,
+    model_path = (
+        Path(config.base.models_dir) / config.dataset_translate.model.dir_path
     )
-    logger.info(f"Loading translation model from {model_path}")
-
     model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path, padding_side="left"
-    )  # Ensure tokenizer is set to left padding (decoder-only model)
-    model.generation_config.pad_token_id = (
-        tokenizer.pad_token_id
-    )  # Ensure padding token is set
-    model.eval()  # Set model to evaluation mode
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="left")
+    tokenizer.pad_token = tokenizer.eos_token
+    model.generation_config.pad_token_id = tokenizer.pad_token_id
+    model.eval()
 
-    for dataset, dataset_conf in config.data.train.items():
-        dataset_path = os.path.join(
-            config.base.datasets_dir,
-            config.format_datasets.format_dir_path,
-            f"{dataset}.parquet",
+    for dataset_name, dataset_conf in config.data.train.items():
+        save_dir = (
+            Path(config.base.datasets_dir)
+            / config.dataset_translate.translate_dir_path
+            / dataset_name
         )
-        save_dir = os.path.join(
-            config.base.datasets_dir,
-            config.dataset_translate.translate_dir_path,
-            dataset,
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        preprocessed_path = (
+            Path(config.base.datasets_dir)
+            / config.preprocess_datasets.preprocess_dir_path
+            / dataset_name
+            / f"{dataset_name}.parquet"
         )
-        os.makedirs(save_dir, exist_ok=True)
-
-        logger.info(f"Loading dataset '{dataset}' from {dataset_path}")
-        dataset_df = load_dataset(dataset_path, dataset_conf.format)
-
-        for col, _ in dataset_conf.col_names.items():
-            if subsets and col not in subsets:
-                logger.info(f"Skipping {col} (not in subsets)")
-                continue
-
-            if col not in dataset_df.columns:
-                raise ValueError(f"Column {col} not found in dataset")
-
-            statements = dataset_df[col].tolist()
-            total_statements = len(statements)
-            logger.info(
-                f"Column '{col}' has {total_statements} statements. "
-                f"Processing sub-batches of {batch_size}, "
-                f"checkpoint every {checkpoint_size} statements."
+        if not preprocessed_path.exists():
+            raise FileNotFoundError(
+                f"Preprocessed dataset missing at {preprocessed_path}"
             )
 
-            # Find partial files for resume
-            # col_partial_{startIdx}_{endIdx}.csv
-            pattern = re.compile(rf"{col}_partial_(\d+)_(\d+)\.csv$")
-            existing_ranges = []
-            for path_ in glob.glob(
-                os.path.join(save_dir, f"{col}_partial_*.csv")
-            ):
-                fname = os.path.basename(path_)
-                match = pattern.match(fname)
-                if match:
-                    s_idx = int(match.group(1))
-                    e_idx = int(match.group(2))
-                    existing_ranges.append((s_idx, e_idx))
+        df = load_dataset(
+            preprocessed_path,
+            dataset_conf.format,
+        ).reset_index(drop=True)
 
-            largest_end_idx = -1
-            if existing_ranges:
-                existing_ranges.sort(key=lambda x: x[0])
-                if existing_ranges[0][0] != 0:
-                    raise ValueError(
-                        f"Partial files for {col} do not start at index 0. "
-                        "Delete partial files or ensure they start at 0."
-                    )
-                # Check for continuity between partials
-                for i in range(1, len(existing_ranges)):
-                    prev_end = existing_ranges[i - 1][1]
-                    curr_start = existing_ranges[i][0]
-                    if curr_start != prev_end + 1:
-                        raise ValueError(
-                            f"Gap detected in partial files for {col} between "
-                            f"{prev_end} and {curr_start}. Delete or fix partial files."
-                        )
-                largest_end_idx = existing_ranges[-1][1]
-            else:
-                largest_end_idx = -1
-
-            current_idx = largest_end_idx + 1
-            if current_idx < 0:
-                current_idx = 0
-
-            logger.info(
-                f"Resuming translation for '{col}' starting from statement index {current_idx}."
-            )
-
-            aggregator = []
-            agg_start_idx = current_idx
-            statements_since_checkpoint = 0
-            remaining = total_statements - current_idx
-            pbar = tqdm(
-                total=remaining, desc=f"Translating {col}", unit="statements"
-            )
-
-            # Translate loop in sub-batches of `batch_size`
-            while current_idx < total_statements:
-                sub_batch_end = min(current_idx + batch_size, total_statements)
-                sub_batch = statements[current_idx:sub_batch_end]
-                sub_translations = translate_batch(
-                    sub_batch,
-                    model,
-                    tokenizer,
-                    config.dataset_translate.model.max_length,
-                    config.dataset_translate.model.prompt_template,
-                    config.dataset_translate.model.model_args,
-                    dataset_conf.src_lang,
-                    dataset_conf.tgt_lang,
-                    device,
-                )
-                aggregator.extend(sub_translations)
-                statements_since_checkpoint += len(sub_batch)
-                pbar.update(len(sub_batch))
-                current_idx = sub_batch_end  # move to next sub-batch
-
-                # Checkpointing
-                if statements_since_checkpoint >= checkpoint_size:
-                    partial_start = agg_start_idx
-                    partial_end = (
-                        agg_start_idx + statements_since_checkpoint - 1
-                    )
-
-                    partial_path = os.path.join(
-                        save_dir,
-                        f"{col}_partial_{partial_start}_{partial_end}.csv",
-                    )
-                    pd.DataFrame(aggregator).to_csv(partial_path, index=False)
-                    logger.info(
-                        f"Checkpoint: wrote {statements_since_checkpoint} statements "
-                        f"[{partial_start}..{partial_end}] to {partial_path}"
-                    )
-
-                    # Reset aggregator
-                    aggregator.clear()
-                    agg_start_idx = partial_end + 1
-                    statements_since_checkpoint = 0
-
-            # Close progress bar
-            pbar.close()
-
-            # Aggregator has leftover statements (< checkpoint_size)
-            if aggregator:
-                partial_start = agg_start_idx
-                partial_end = partial_start + len(aggregator) - 1
-                partial_path = os.path.join(
-                    save_dir, f"{col}_partial_{partial_start}_{partial_end}.csv"
-                )
-                pd.DataFrame(aggregator).to_csv(partial_path, index=False)
-                logger.info(
-                    f"Final partial: wrote leftover {len(aggregator)} statements "
-                    f"[{partial_start}..{partial_end}] to {partial_path}"
-                )
-                aggregator.clear()
-
-            # Combine all partial files
-            partial_files = sorted(
-                glob.glob(os.path.join(save_dir, f"{col}_partial_*.csv")),
-                key=lambda x: (
-                    int(re.findall(r"_partial_(\d+)_", x)[0]),
-                    int(re.findall(r"_(\d+)\.csv", x)[0]),
-                ),
-            )
-
-            if partial_files:
-                combined_df = pd.concat(
-                    (pd.read_csv(f) for f in partial_files), ignore_index=True
-                )
-                final_path = os.path.join(save_dir, f"{col}_translated.csv")
-                combined_df.to_csv(final_path, index=False)
-
-                # Verify completeness
-                if combined_df.shape[0] == total_statements:
-                    logger.info(
-                        f"Combined partial files into '{final_path}' with {combined_df.shape[0]} rows. "
-                        "Removing partial files."
-                    )
-                    for f in partial_files:
-                        os.remove(f)
-                else:
-                    logger.error(
-                        f"Combined file for '{col}' has {combined_df.shape[0]} rows, "
-                        f"but expected {total_statements}. Keeping partial files."
-                    )
+        translate_dataset(
+            df=df,
+            model=model,
+            tokenizer=tokenizer,
+            config=config,
+            dataset_conf=dataset_conf,
+            device=device,
+            save_dir=save_dir,
+            batch_size=batch_size,
+            logger=logger,
+        )
 
 
 if __name__ == "__main__":
-
-    args_parser = argparse.ArgumentParser()
-    args_parser.add_argument("--config", dest="config", required=True)
-    args_parser.add_argument(
-        "--batch-size", dest="batch_size", default=10, type=int
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=int,
+        default=10,
     )
-    args_parser.add_argument(
-        "--subsets", dest="subsets", nargs="+", default=None, type=str
-    )
-    args = args_parser.parse_args()
-    translate_datasets(args.config, args.batch_size, args.subsets)
+    args = parser.parse_args()
+    translate_datasets(args.config, args.batch_size)
