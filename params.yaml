@@ -8,19 +8,18 @@ base:
   evaluations_dir: ./evaluations
 
 data:
-  train:
-    magpie_v2_llama3:
-      dir_path: magpie_v2_skywork_o1/data
-      name: magpie_v2_llama3
-      format: parquet
-      hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Skywork-O1-Llama-3.1-8B
-      src_lang: English
-      tgt_lang: Spanish
-      max_length: 1024
-      max_samples: 10000
-      col_names: # map column names to dataset schema
-        instruction: instruction
-        response: response
+  magpie_v2_deepseek_r1:
+    dir_path: magpie_v2_deepseek_r1/data
+    name: magpie_v2_deepseek_r1
+    format: parquet
+    hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Deepseek-R1-Llama-70B
+    src_lang: English
+    tgt_lang: Spanish
+    max_length: 2048
+    # max_samples: 10000 # sampling
+    col_names: # map column names to dataset schema
+      instruction: instruction
+      output: response
 
 format_datasets:
   raw_dir_path: raw
@@ -43,20 +42,6 @@ dataset_translate:
       max_new_tokens: 128
       early_stopping: true
 
-fine_tune:
-  training_dir_path: tuned
-  hf_model_id: BSC-LT/salamandra-7b
-  training_args:
-    num_train_epochs: 10
-    per_device_train_batch_size: 2
-    per_device_eval_batch_size: 1
-    save_steps: 500
-    save_total_limit: 3
-    learning_rate: 3e-4
-    logging_steps: 1000
-    warmup_steps: 500
-    weight_decay: 0.01
-    fp16: true
-    gradient_accumulation_steps: 4
-    report_to: none
-    optim: adamw_torch
+convert_datasets:
+  convert_dir_path: converted
+  template: chatml

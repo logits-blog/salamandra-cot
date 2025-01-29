@@ -10,7 +10,6 @@ pyarrow
 python-box
 black
 isort
-dvc
-peft
-trl
 protobuf
+axolotl[flash-attn,deepspeed]==0.5.2
+pynvml==11.5.0
