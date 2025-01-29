@@ -61,6 +61,7 @@ RUN apt-get update --yes && \
     libhdf5-serial-dev \
     libsm6 \
     nvtop \
+    task-spooler \
     libssl-dev && \
     # File Systems and Storage
     apt install --yes --no-install-recommends \
@@ -80,6 +81,10 @@ RUN curl https://pyenv.run | bash  && \
     pyenv install $PYTHON_VERSION  && \
     pyenv global $PYTHON_VERSION  && \
     pyenv rehash
+
+# HF CLI
+RUN pip install --upgrade pip && \
+    pip install -U "huggingface_hub[cli]"
 
 # zsh
 RUN sh -c "$(curl -L https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)"
