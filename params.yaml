@@ -6,6 +6,7 @@ base:
   checkpoints_dir: ./checkpoints
   generations_dir: ./generations
   evaluations_dir: ./evaluations
+  hf_org_id: logits-blog
 
 data:
   magpie_v2_deepseek_r1:
@@ -45,3 +46,21 @@ dataset_translate:
 convert_datasets:
   convert_dir_path: converted
   template: chatml
+  
+evaluate_models:
+  models:
+    # - salamandra_2b_cot_eng
+    - salamandra_2b
+  tasks:
+    - "harness|bbh:logical_deduction_3"
+    - "harness|bbh:tracking_shuffled_objects_3"
+    - "harness|bbh:causal_judgment"
+    - "harness|bbh:date_understanding"
+    - "harness|bbh:disambiguation_qa"
+    - "harness|bbh:geometric_shapes"
+    - "helm|mmlu"
+    - "lighteval|gsm8k"
+    - "bigbench|causal_judgment"
+    - "bigbench|formal_fallacies_syllogisms_negation"
+    - "lighteval|truthfulqa:mc"
+    - "lighteval|commonsenseqa"

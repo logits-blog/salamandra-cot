@@ -162,7 +162,9 @@ gcsfs==2024.9.0.post1
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.44
-    # via wandb
+    # via
+    #   lighteval
+    #   wandb
 google-api-core==2.24.1
     # via
     #   google-cloud-core
@@ -258,6 +260,8 @@ langdetect==1.0.9
     # via axolotl
 liger-kernel==0.4.1
     # via axolotl
+lighteval==0.0.1
+    # via -r requirements.in
 llvmlite==0.44.0
     # via numba
 lm-eval==0.4.4

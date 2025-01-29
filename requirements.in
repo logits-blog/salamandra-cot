@@ -13,3 +13,4 @@ isort
 protobuf
 axolotl[flash-attn,deepspeed]==0.5.2
 pynvml==11.5.0
+lighteval
