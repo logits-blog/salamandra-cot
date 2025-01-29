@@ -20,7 +20,7 @@ def filter_dataset(config_path: str) -> None:
         Path(config.base.models_dir) / config.dataset_translate.model.dir_path
     )
 
-    for dataset_name, dataset_conf in config.data.train.items():
+    for dataset_name, dataset_conf in config.data.items():
         input_path = (
             Path(config.base.datasets_dir)
             / config.format_datasets.format_dir_path
@@ -71,7 +71,7 @@ def filter_dataset(config_path: str) -> None:
             row = df.iloc[idx]
             try:
                 instr_len = len(row.instruction) + template_len
-                resp_len = len(row.response) + template_len
+                resp_len = len(row.output) + template_len
                 if (
                     instr_len > max_length * char_per_token
                     or resp_len > max_length * char_per_token
@@ -82,7 +82,7 @@ def filter_dataset(config_path: str) -> None:
                     src_lang=src_lang, tgt_lang=tgt_lang, stmt=row.instruction
                 )
                 formatted_resp = prompt_template.format(
-                    src_lang=src_lang, tgt_lang=tgt_lang, stmt=row.response
+                    src_lang=src_lang, tgt_lang=tgt_lang, stmt=row.output
                 )
 
                 instr_tokens = tokenizer.encode(

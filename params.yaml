@@ -1,8 +1,8 @@
 base:
   project_name: salamandra-cot
   log_level: DEBUG
-  models_dir: ../models
-  datasets_dir: ../datasets
+  models_dir: ./models
+  datasets_dir: ./datasets
   checkpoints_dir: ./checkpoints
   generations_dir: ./generations
   evaluations_dir: ./evaluations
@@ -15,7 +15,7 @@ data:
     hf_dataset_id: Magpie-Align/Magpie-Reasoning-V2-250K-CoT-Deepseek-R1-Llama-70B
     src_lang: English
     tgt_lang: Spanish
-    max_length: 2048
+    # max_length: 2048 # filtering
     # max_samples: 10000 # sampling
     col_names: # map column names to dataset schema
       instruction: instruction
@@ -30,7 +30,7 @@ preprocess_datasets:
 
 dataset_translate:
   translate_dir_path: translated
-  checkpoint_step: 10
+  checkpoint_step: 100
   model:
     dir_path: salamandrata_2b
     hf_model_id: BSC-LT/salamandraTA-2B

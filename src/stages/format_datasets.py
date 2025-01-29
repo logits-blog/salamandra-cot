@@ -17,7 +17,7 @@ def format_datasets(
     config = load_config(config_path)
     logger = get_logger("DATA_PREPROCESS", config.base.log_level)
 
-    for dataset, dataset_conf in config.data.train.items():
+    for dataset, dataset_conf in config.data.items():
         dataset_path = f"{config.base.datasets_dir}/{config.format_datasets.raw_dir_path}/{dataset_conf.dir_path}"
         logger.info(f"Loading dataset {dataset} from {dataset_path}")
         dataset_df = load_dataset(
@@ -29,9 +29,9 @@ def format_datasets(
         dataset_df = dataset_df.rename(
             columns={
                 dataset_conf.col_names.instruction: "instruction",
-                dataset_conf.col_names.response: "response",
+                dataset_conf.col_names.output: "output",
             }
-        )[["instruction", "response"]]
+        )[["instruction", "output"]]
 
         formatted_dir = f"{config.base.datasets_dir}/{config.format_datasets.format_dir_path}"
         formatted_path = f"{formatted_dir}/{dataset}.parquet"

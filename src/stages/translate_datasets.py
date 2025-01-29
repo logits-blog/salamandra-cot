@@ -151,20 +151,18 @@ def translate_dataset(
     batch_size: int,
     logger: any,
 ) -> None:
-    instruction_lines, response_lines = [], []
+    instruction_lines, output_lines = [], []
     for idx in range(len(df)):
         instruction = df.iloc[idx].instruction
-        response = df.iloc[idx].response
+        output = df.iloc[idx].output
 
         instruction_lines.extend(
             (idx, line.strip()) for line in instruction.split("\n")
         )
-        response_lines.extend(
-            (idx, line.strip()) for line in response.split("\n")
-        )
+        output_lines.extend((idx, line.strip()) for line in output.split("\n"))
 
     instruction_ckpt_dir = save_dir / "checkpoints_instruction"
-    response_ckpt_dir = save_dir / "checkpoints_response"
+    output_ckpt_dir = save_dir / "checkpoints_output"
     checkpoint_step = config.dataset_translate.checkpoint_step
 
     logger.info(f"Translating {len(instruction_lines)} instruction lines")
@@ -184,10 +182,10 @@ def translate_dataset(
             progress_bar=pbar,
         )
 
-    logger.info(f"Translating {len(response_lines)} response lines")
-    with tqdm(total=len(response_lines), desc="Response Lines") as pbar:
+    logger.info(f"Translating {len(output_lines)} output lines")
+    with tqdm(total=len(output_lines), desc="Output Lines") as pbar:
         process_text_lines(
-            lines=response_lines,
+            lines=output_lines,
             model=model,
             tokenizer=tokenizer,
             prompt_template=config.dataset_translate.model.prompt_template,
@@ -196,7 +194,7 @@ def translate_dataset(
             tgt_lang=dataset_conf.tgt_lang,
             device=device,
             batch_size=batch_size,
-            checkpoint_dir=response_ckpt_dir,
+            checkpoint_dir=output_ckpt_dir,
             checkpoint_step=checkpoint_step,
             progress_bar=pbar,
         )
@@ -204,8 +202,8 @@ def translate_dataset(
     # Merge checkpoints and build final dataset
     logger.info("Merging instruction checkpoints")
     instr_results = merge_checkpoints(instruction_ckpt_dir)
-    logger.info("Merging response checkpoints")
-    resp_results = merge_checkpoints(response_ckpt_dir)
+    logger.info("Merging output checkpoints")
+    resp_results = merge_checkpoints(output_ckpt_dir)
 
     # Build final translated dataset
     final_data = []
@@ -214,9 +212,9 @@ def translate_dataset(
             {
                 "original_index": idx,
                 "original_instruction": df.iloc[idx].instruction,
-                "original_response": df.iloc[idx].response,
+                "original_output": df.iloc[idx].output,
                 "translated_instruction": "\n".join(instr_results.get(idx, [])),
-                "translated_response": "\n".join(resp_results.get(idx, [])),
+                "translated_output": "\n".join(resp_results.get(idx, [])),
             }
         )
 
@@ -240,7 +238,7 @@ def translate_datasets(config_path: str, batch_size: int) -> None:
     model.generation_config.pad_token_id = tokenizer.pad_token_id
     model.eval()
 
-    for dataset_name, dataset_conf in config.data.train.items():
+    for dataset_name, dataset_conf in config.data.items():
         save_dir = (
             Path(config.base.datasets_dir)
             / config.dataset_translate.translate_dir_path
@@ -283,7 +281,7 @@ if __name__ == "__main__":
         "--batch-size",
         dest="batch_size",
         type=int,
-        default=10,
+        default=5,
     )
     args = parser.parse_args()
     translate_datasets(args.config, args.batch_size)

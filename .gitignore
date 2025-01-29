@@ -3,6 +3,7 @@ datasets/
 checkpoints/
 evaluations/
 generations/
+models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
