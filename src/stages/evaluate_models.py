@@ -1,25 +1,17 @@
-from datetime import timedelta
+import os
 import argparse
 
 from src.utils.config import load_config
 from src.utils.logging import get_logger
 
 from lighteval.logging.evaluation_tracker import EvaluationTracker
-from lighteval.models.vllm.vllm_model import VLLMModelConfig
+from lighteval.models.transformers.transformers_model import (
+    TransformersModelConfig,
+)
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 from lighteval.utils.utils import EnvConfig
-from lighteval.utils.imports import is_accelerate_available
 
-if is_accelerate_available():
-    from accelerate import Accelerator, InitProcessGroupKwargs
-
-    accelerator = Accelerator(
-        kwargs_handlers=[
-            InitProcessGroupKwargs(timeout=timedelta(seconds=3000))
-        ]
-    )
-else:
-    accelerator = None
+os.environ["CUDA_VISIBLE_DEVICES"] = "cuda:0"
 
 
 def evaluate_models(
@@ -31,8 +23,7 @@ def evaluate_models(
     evaluation_tracker = EvaluationTracker(
         output_dir=config.base.evaluations_dir,
         save_details=True,
-        push_to_hub=True,
-        hub_results_org=config.base.hf_org_id,
+        push_to_hub=False,
     )
 
     pipeline_params = PipelineParameters(
@@ -43,15 +34,33 @@ def evaluate_models(
         max_samples=10,
     )
 
-    for model in config.evaluate_models.models:
-        model_config = VLLMModelConfig(
-            pretrained=config.models_dir[model],
-            dtype="float16",
-            use_chat_template=True,
+    for model, model_conf in config.evaluate_models.models.items():
+        logger.info(f"Evaluating model: {model}")
+
+        model_config = {
+            "pretrained": f"{config.base.models_dir}/{model_conf.dir_path}",
+            "dtype": "bfloat16",
+            "use_chat_template": True,
+        }
+
+        model_config = TransformersModelConfig(
+            **model_config,
         )
 
+        few_shot = config.evaluate_models.few_shot
+        truncate_few_shots = config.evaluate_models.truncate_few_shots
+        tasks = ",".join(
+            [
+                f"{t}|{few_shot}|{truncate_few_shots}"
+                for t in config.evaluate_models.tasks
+            ]
+        )
+
+        logger.info("Evaluation tasks:\n" + "\n".join(config.evaluate_models.tasks))
+        logger.info(f"Few shot: {few_shot}, Truncate few shots: {truncate_few_shots}")
+
         pipeline = Pipeline(
-            tasks=config.evaluate_models.tasks,
+            tasks=tasks,
             pipeline_parameters=pipeline_params,
             evaluation_tracker=evaluation_tracker,
             model_config=model_config,

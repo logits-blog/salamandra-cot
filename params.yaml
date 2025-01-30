@@ -49,18 +49,16 @@ convert_datasets:
   
 evaluate_models:
   models:
-    # - salamandra_2b_cot_eng
-    - salamandra_2b
+    # salamandra_2b_cot_eng:
+    #   dir_path: axolotl/salamandra_2b_cot_eng
+    salamandra_2b:
+      dir_path: salamandra_2b
+  few_shot: 3
+  truncate_few_shots: 1 # {0: no truncation, 1: truncate}
   tasks:
-    - "harness|bbh:logical_deduction_3"
-    - "harness|bbh:tracking_shuffled_objects_3"
     - "harness|bbh:causal_judgment"
     - "harness|bbh:date_understanding"
     - "harness|bbh:disambiguation_qa"
     - "harness|bbh:geometric_shapes"
     - "helm|mmlu"
     - "lighteval|gsm8k"
-    - "bigbench|causal_judgment"
-    - "bigbench|formal_fallacies_syllogisms_negation"
-    - "lighteval|truthfulqa:mc"
-    - "lighteval|commonsenseqa"
